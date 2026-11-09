@@ -31,6 +31,9 @@ def scene():
 
 ok = True
 print("platform", sys.platform, "| OCR available:", fa.ocr_available(), fa._WIN_OCR.get("error", ""))
+if sys.platform == "win32":
+    fa._win_bitmap(np.zeros((8, 8, 3), np.uint8))
+    print("bitmap via:", getattr(fa._WIN_OCR.get("way"), "__name__", "?"))
 if not fa.ocr_available():
     print("FAIL: no text recognition")
     sys.exit(1)
@@ -49,7 +52,10 @@ ok &= pos is not None and abs(pos[0] - 920) < 40 and abs(pos[1] - 505) < 25
 img, d = scene()
 d.text((700, 400), "Wind Shake", font=font(30), fill=(255, 255, 255))
 d.text((700, 600), "Shake it off", font=font(30), fill=(255, 255, 255))
-pos = fa.find_shake(np.asarray(img))
+arr = np.asarray(img)
+crop = np.ascontiguousarray(arr[int(0.07 * 1080):int(0.86 * 1080)][::2, ::2])
+print("  raw text read:", [(t, [round(v) for v in b]) for t, _, b in fa.ocr_fast(crop)])
+pos = fa.find_shake(arr)
 print(f"look-alikes -> {pos}")
 ok &= pos is None
 

@@ -208,15 +208,17 @@ def _win_bitmap(img_rgb):
         dw.write_bytes(raw)
         return dw.detach_buffer()
 
-    ways = [via_bytes, via_buffer, via_writer]
+    ways = [via_buffer, via_writer, via_bytes]      # copies into Windows-owned memory first
     if "way" in _WIN_OCR:
         ways = [_WIN_OCR["way"]] + [f for f in ways if f is not _WIN_OCR["way"]]
     last = None
     for way in ways:
         try:
-            bmp = SoftwareBitmap.create_copy_from_buffer(way(), BitmapPixelFormat.BGRA8, w, h,
+            src = way()
+            bmp = SoftwareBitmap.create_copy_from_buffer(src, BitmapPixelFormat.BGRA8, w, h,
                                                         BitmapAlphaMode.PREMULTIPLIED)
             _WIN_OCR["way"] = way
+            _WIN_OCR["src"] = (src, raw)          # keep the source memory alive while it's read
             return bmp
         except Exception as e:
             last = e
@@ -243,6 +245,7 @@ def _win_ocr(img_rgb):
     async def go():
         return await eng.recognize_async(bmp)
     res = asyncio.run(go())
+    _WIN_OCR.pop("src", None)
     out = []
     for line in res.lines:
         xs0, ys0, xs1, ys1 = [], [], [], []
