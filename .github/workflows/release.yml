@@ -76,6 +76,9 @@ jobs:
             pyobjc-framework-ScreenCaptureKit pyobjc-framework-CoreMedia pyobjc-framework-libdispatch
       - name: Text reading works on macOS
         run: pip install pillow && python tools/ci_ocr_test.py
+      - name: Permission prompts can be called on macOS
+        run: |
+          python -c "import sys; sys.path.insert(0, 'macro'); import fisch_platform as fp; fp.request_accessibility_prompt(strict=True); print('permission prompt call OK', fp.permissions())"
       - name: Build Fisch Macro.app
         run: |
           pyinstaller --noconfirm --windowed --name "Fisch Macro" \

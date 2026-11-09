@@ -119,6 +119,8 @@ class App:
         return all(self.cfg.get(k) is not None for k in ("track_left", "track_right", "track_y"))
 
     def start_background(self):
+        if IN_APP and fp.IS_MAC and not all(self.perms().values()):
+            threading.Thread(target=fp.request_all_prompts, daemon=True).start()
         self.macro.ensure_thread()
         self.hotkeys = self.macro.start_hotkeys()
         threading.Thread(target=self.preview_loop, daemon=True).start()
@@ -177,6 +179,7 @@ class App:
                      "h": self.shot["img"].shape[0]} if self.shot else None,
             "platform": sys.platform,
             "host": HOST_APP,
+            "app_path": fp.running_app()[1],
             "version": VERSION,
             "update": os.environ.get("FISCH_UPDATE_NOTE", ""),
         }
@@ -491,6 +494,13 @@ def make_handler(app, server_ref):
                     # one scan at a time: extra clicks while one is running are ignored
                     started = app.macro.identify_async()
                     return self.send(200, {"ok": True, "busy": not started})
+                if self.path == "/api/fix_permissions":
+                    ok, msg = fp.reset_permissions()
+                    app.log("Permissions: " + msg + (" - switch Fisch Macro on in the lists, then quit and reopen"
+                                                     if ok else ""))
+                    if ok:
+                        fp.open_settings("accessibility")
+                    return self.send(200, {"ok": ok, "msg": msg})
                 if self.path == "/api/open_settings":
                     which = data.get("which")
                     if which == "accessibility":
@@ -651,6 +661,11 @@ ul.check{margin:0;padding-left:18px} ul.check li{margin:4px 0}
   <div id="permList"></div>
   <p class="hint" style="margin:10px 0 0">After switching __HOST__ on, quit it completely (__QUIT__) and open
   __OPEN__ again. macOS only applies these permissions to a freshly started app.</p>
+  <div id="permFix" style="display:none;margin-top:10px">
+    <p class="hint" style="margin:0 0 6px">Already switched on but still blocked? The switches probably belong to an
+    older copy of the app: macOS ties them to the exact download. <span id="appPath"></span></p>
+    <button class="small" id="fixPermBtn">Fix permissions (re-add this copy)</button>
+  </div>
 </section>
 
 <section class="card">
@@ -816,6 +831,8 @@ function drawLive(det) {
 function render() {
   const s = S;
   $('#ver').textContent = s.version ? 'v' + s.version : '';
+  $('#permFix').style.display = s.app_path ? '' : 'none';
+  $('#appPath').textContent = s.app_path ? 'Running copy: ' + s.app_path : '';
   $('#updCard').style.display = s.update ? '' : 'none';
   $('#updText').textContent = s.update || '';
   $('#quitTop').style.display = (s.host && s.host !== 'Terminal') ? '' : 'none';
@@ -987,6 +1004,7 @@ $('#quitBtn').onclick = async () => {
 };
 $('#quitTop').onclick = () => { api('/api/quit', {}).then(() => {
   document.body.innerHTML = '<main><h1>Fisch Macro closed</h1><p class="hint">You can close this tab.</p></main>'; }); };
+$('#fixPermBtn').onclick = () => api('/api/fix_permissions', {});
 poll();
 </script></body></html>
 """

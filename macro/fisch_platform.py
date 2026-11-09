@@ -71,15 +71,89 @@ def open_settings(which):
     return False
 
 
-def request_accessibility_prompt():
-    """Ask macOS to show its own 'allow accessibility' prompt (adds Terminal to the list)."""
+APP_BUNDLE_ID = "com.vinnyinnit.fischmacro"
+
+
+def running_app():
+    """(bundle id, .app path) of the app this code runs inside, or (None, None) when it
+    runs from Terminal/Python."""
+    if not IS_MAC:
+        return None, None
+    try:
+        from Foundation import NSBundle
+        b = NSBundle.mainBundle()
+        bid = b.bundleIdentifier()
+        path = b.bundlePath()
+        if bid and str(path).endswith(".app"):
+            return str(bid), str(path)
+    except Exception:
+        pass
+    return None, None
+
+
+def request_all_prompts():
+    """Ask macOS to list THIS app under Accessibility, Screen Recording and Input
+    Monitoring (it shows its own prompts for the ones that are missing)."""
+    if not IS_MAC:
+        return
+    request_accessibility_prompt()
+    try:
+        _CG.CGRequestScreenCaptureAccess.restype = ctypes.c_bool
+        _CG.CGRequestScreenCaptureAccess()
+    except Exception:
+        pass
+    try:
+        _IOK.IOHIDRequestAccess.restype = ctypes.c_bool
+        _IOK.IOHIDRequestAccess.argtypes = [ctypes.c_int]
+        _IOK.IOHIDRequestAccess(1)                   # 1 = listen-event (Input Monitoring)
+    except Exception:
+        pass
+
+
+def reset_permissions():
+    """When the switches are on but don't work: they belong to an older copy of the app
+    (macOS ties them to the exact build). Remove Fisch Macro's old entries, then ask macOS
+    to add fresh ones for this copy. Only ever touches this app's own entries."""
+    bid, path = running_app()
+    if bid != APP_BUNDLE_ID:
+        return False, "only available in the Fisch Macro app"
+    done = []
+    for service in ("Accessibility", "ScreenCapture", "ListenEvent"):
+        try:
+            r = subprocess.run(["tccutil", "reset", service, bid], capture_output=True, timeout=10)
+            if r.returncode == 0:
+                done.append(service)
+        except Exception:
+            pass
+    request_all_prompts()
+    return True, f"reset {', '.join(done) or 'nothing'} for {path}"
+
+
+def request_accessibility_prompt(strict=False):
+    """Ask macOS to show its own 'allow accessibility' prompt (adds this app to the list).
+    Calls the system directly, so it works without extra Python packages."""
     if not IS_MAC:
         return
     try:
-        from ApplicationServices import AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
-        AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True})
+        cf, ax = _CF, _AS
+        prompt_key = ctypes.c_void_p.in_dll(ax, "kAXTrustedCheckOptionPrompt")
+        true_val = ctypes.c_void_p.in_dll(cf, "kCFBooleanTrue")
+        keys = (ctypes.c_void_p * 1)(prompt_key.value)
+        vals = (ctypes.c_void_p * 1)(true_val.value)
+        kcb = ctypes.addressof(ctypes.c_char.in_dll(cf, "kCFTypeDictionaryKeyCallBacks"))
+        vcb = ctypes.addressof(ctypes.c_char.in_dll(cf, "kCFTypeDictionaryValueCallBacks"))
+        cf.CFDictionaryCreate.restype = ctypes.c_void_p
+        cf.CFDictionaryCreate.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long,
+                                          ctypes.c_void_p, ctypes.c_void_p]
+        d = cf.CFDictionaryCreate(None, keys, vals, 1, kcb, vcb)
+        ax.AXIsProcessTrustedWithOptions.restype = ctypes.c_bool
+        ax.AXIsProcessTrustedWithOptions.argtypes = [ctypes.c_void_p]
+        ax.AXIsProcessTrustedWithOptions(d)
+        cf.CFRelease.argtypes = [ctypes.c_void_p]
+        cf.CFRelease(d)
     except Exception:
-        pass
+        if strict:
+            raise
 
 
 # ------------------------------------------------------------ fast capture

@@ -1,1 +1,1 @@
-v1.1.0: the controls now open in their own app window, and on Windows the macro reads your rod and clicks the Shake button too. Please download the new app once.
+v1.1.1: a 'Fix permissions' button for when macOS ignores switches you already turned on (they belonged to an older copy of the app).
