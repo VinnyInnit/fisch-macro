@@ -18,6 +18,7 @@ import numpy as np
 
 import fisch_macro as fm
 import fisch_overlay
+import fisch_window
 import fisch_platform as fp
 import fisch_auto as fa
 
@@ -89,6 +90,7 @@ class App:
         self.shot = None          # dict: img (H,W,3), png bytes, mon, scale, id
         self.preview_det = None
         self.stop_event = threading.Event()
+        self.window = None            # the app window, when running as the app
         self.hotkeys = None
         self._preview_mem = {}
         self._perm = (0, fp.permissions())
@@ -471,6 +473,11 @@ def make_handler(app, server_ref):
                                                         "the launcher again."})
                     app.macro.start()
                     return self.send(200, {"ok": True})
+                if self.path == "/api/focus":
+                    shown = fisch_window.focus(app)
+                    if not shown:
+                        webbrowser.open(f"http://{HOST}:{self.server.server_address[1]}/")
+                    return self.send(200, {"ok": True})
                 if self.path == "/api/stop":
                     app.macro.stop()
                     return self.send(200, {"ok": True})
@@ -527,10 +534,25 @@ def serve(app, open_browser=True):
 def main():
     app = App()
     app.start_background()
-    server, _ = serve(app, open_browser="--no-browser" not in sys.argv)
+    use_window = IN_APP and "--browser" not in sys.argv and fisch_window.available()
+    server, url = serve(app, open_browser=not use_window and "--no-browser" not in sys.argv)
     use_overlay = app.overlay_ok and "--no-overlay" not in sys.argv
     try:
-        if use_overlay:
+        if use_window:
+            # the app's own window owns the main thread; the web server runs alongside it
+            t = threading.Thread(target=server.serve_forever, daemon=True)
+            t.start()
+            if fisch_window.run(url, app, overlay=use_overlay, log=app.log):
+                return                       # window closed -> quit (finally: below)
+            webbrowser.open(url)             # couldn't show the window: fall back to the browser
+            if use_overlay:
+                try:
+                    fisch_overlay.run(app.overlay_state, app.stop_event)
+                except Exception as e:
+                    app.log(f"Overlay unavailable: {e!r}")
+            while t.is_alive() and not app.stop_event.is_set():
+                time.sleep(0.5)
+        elif use_overlay:
             import signal
 
             def _stop(*_):
@@ -958,11 +980,12 @@ $('#saveBtn').onclick = async () => {
   $('#saved').textContent = r.bad.length ? 'Not saved (invalid): ' + r.bad.join(', ') : 'Saved ✓';
 };
 $('#quitBtn').onclick = async () => {
-  if (!confirm('Quit Fisch Macro?')) return;
+  const inApp = S && S.host && S.host !== 'Terminal';      // the app window may not show browser dialogs
+  if (!inApp && !confirm('Quit Fisch Macro?')) return;
   await api('/api/quit', {}).catch(() => {});
   document.body.innerHTML = '<main><h1>Fisch Macro closed</h1><p class="hint">You can close this tab.</p></main>';
 };
-$('#quitTop').onclick = () => { if (confirm('Quit Fisch Macro?')) api('/api/quit', {}).then(() => {
+$('#quitTop').onclick = () => { api('/api/quit', {}).then(() => {
   document.body.innerHTML = '<main><h1>Fisch Macro closed</h1><p class="hint">You can close this tab.</p></main>'; }); };
 poll();
 </script></body></html>

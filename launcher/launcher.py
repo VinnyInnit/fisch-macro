@@ -108,7 +108,12 @@ def already_running():
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/state", timeout=0.4) as r:
                 if r.status == 200 and b'"phase"' in r.read(400):
-                    webbrowser.open(f"http://127.0.0.1:{port}/")
+                    try:            # bring its window forward (it opens the browser if it has none)
+                        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/focus", data=b"{}",
+                                                     headers={"Content-Type": "application/json"})
+                        urllib.request.urlopen(req, timeout=2).read()
+                    except Exception:
+                        webbrowser.open(f"http://127.0.0.1:{port}/")
                     return True
         except Exception:
             continue
@@ -212,6 +217,11 @@ def _bundle_hint():          # never called: makes the app builder pack every mo
     import bundle_imports    # noqa: F401
 
 
+def fisch_window_ok():
+    import fisch_window
+    return fisch_window.available()
+
+
 def selftest():
     """Used by the release build: can the built app load the macro and everything it needs?"""
     out = os.environ.get("FISCH_SELFTEST_OUT") or os.path.join(DATA, "selftest.txt")
@@ -221,15 +231,20 @@ def selftest():
         os.environ["FISCH_DATA_DIR"] = DATA
         import importlib
         mods = ["app", "fisch_macro", "fisch_reel", "fisch_auto", "fisch_overlay", "fisch_platform",
-                "fisch_sck", "numpy", "mss", "mss.tools", "pynput.mouse", "pynput.keyboard", "certifi"]
+                "fisch_sck", "fisch_window", "numpy", "mss", "mss.tools", "pynput.mouse", "pynput.keyboard",
+                "certifi", "webview"]
         if sys.platform == "darwin":
-            mods += ["objc", "AppKit", "Quartz", "Vision", "ScreenCaptureKit", "CoreMedia", "dispatch"]
+            mods += ["objc", "AppKit", "Quartz", "Vision", "ScreenCaptureKit", "CoreMedia", "dispatch", "WebKit",
+                     "PyObjCTools.AppHelper", "webview.platforms.cocoa"]
         if sys.platform == "win32":
-            mods += ["tkinter"]
+            mods += ["tkinter", "clr", "winrt.windows.media.ocr", "winrt.windows.graphics.imaging",
+                     "webview.platforms.winforms"]
         for m in mods:
             importlib.import_module(m)
         import fisch_sck
-        info = f"OK payload {read_version(d)} | sck {fisch_sck.available()} | ssl {SSL_CTX is not None}"
+        import fisch_auto
+        info = (f"OK payload {read_version(d)} | sck {fisch_sck.available()} | ocr {fisch_auto.ocr_available()} "
+                f"| window {fisch_window_ok()} | ssl {SSL_CTX is not None}")
         code = 0
     except Exception:
         info, code = "FAIL\n" + traceback.format_exc(), 1

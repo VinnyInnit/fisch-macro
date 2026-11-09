@@ -8,9 +8,13 @@ import numpy
 import mss, mss.tools
 import pynput, pynput.mouse, pynput.keyboard
 import certifi
+import webview
 import sys
 
 if sys.platform == "darwin":
-    import objc, Foundation, AppKit, Quartz, Vision, ScreenCaptureKit, CoreMedia, dispatch
+    import objc, Foundation, AppKit, Quartz, Vision, ScreenCaptureKit, CoreMedia, dispatch, WebKit
+    from PyObjCTools import AppHelper
 elif sys.platform == "win32":
-    import tkinter
+    import tkinter, asyncio, clr
+    import winrt.windows.media.ocr, winrt.windows.graphics.imaging, winrt.windows.storage.streams
+    import winrt.windows.foundation, winrt.windows.foundation.collections, winrt.windows.globalization

@@ -15,7 +15,8 @@ Get the newest version from **[Releases](../../releases/latest)**:
 | **Windows** | `FischMacro-Windows.exe` | Double-click it. |
 
 The app updates itself: each time it starts it fetches the newest macro, and only installs
-updates signed with this project's key.
+updates signed with this project's key. (If an update needs a newer app, the window tells you
+to download it again from here.)
 
 ### First open on a Mac
 The app isn't signed with an Apple developer ID, so macOS blocks the first launch:
@@ -32,6 +33,7 @@ Equip your rod, stand at the water, press **Start** in the window, and click int
 Pause with **F6** or by moving the mouse into the top-left corner.
 In Fisch's settings, turn off Higher Brightness, Higher Saturation and Wind Shake.
 
-On Windows, reading your rod name and the Shake button isn't available yet (the reel works).
+The controls open in their own window; closing it quits the app. Opening the app again while it
+runs just brings the window back.
 
 > Macros are against Roblox's and Fisch's rules. Use it at your own risk.

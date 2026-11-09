@@ -57,15 +57,29 @@ def layout(state):
 
 # ------------------------------------------------------------------ macOS
 
+_KEEP = []          # the overlay's Cocoa objects must outlive build_mac()
+
+
 def run_mac(get_state, stop_event, fps=30):
-    import objc
+    """Overlay as its own (invisible, Dock-less) app: builds it and runs the event loop."""
+    from AppKit import NSApplication
+    app = NSApplication.sharedApplication()
+    app.setActivationPolicy_(1)                      # "accessory": no Dock icon, never steals focus
+    build_mac(get_state, stop_event, fps, owns_app=True)
+    app.run()
+
+
+def build_mac(get_state, stop_event, fps=30, owns_app=False):
+    """Create the overlay window and its redraw timer on the current (main) thread's event
+    loop. With owns_app=False the loop belongs to someone else (the app window), so stopping
+    only hides the overlay instead of quitting."""
+    import objc  # noqa: F401
     from AppKit import (NSApplication, NSWindow, NSView, NSColor, NSBezierPath, NSScreen,
                         NSFont, NSString, NSTimer, NSMakeRect, NSFontAttributeName,
                         NSForegroundColorAttributeName, NSBackingStoreBuffered)
     from Foundation import NSObject
 
     app = NSApplication.sharedApplication()
-    app.setActivationPolicy_(1)                      # "accessory": no Dock icon, never steals focus
 
     def col(name):
         r, g, b, a = COLORS[name]
@@ -113,7 +127,11 @@ def run_mac(get_state, stop_event, fps=30):
     class Ticker(NSObject):
         def tick_(self, timer):
             if stop_event.is_set():
-                app.terminate_(None)
+                if owns_app:
+                    app.terminate_(None)
+                else:
+                    self.win.orderOut_(None)
+                    timer.invalidate()
                 return
             st = get_state()
             vis = bool(st.get("enabled") and st.get("geom"))
@@ -139,8 +157,9 @@ def run_mac(get_state, stop_event, fps=30):
     win.setContentView_(view)
     ticker = Ticker.alloc().init()
     ticker.win, ticker.view = win, view
-    NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(1.0 / fps, ticker, "tick:", None, True)
-    app.run()
+    timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(1.0 / fps, ticker, "tick:", None, True)
+    _KEEP.extend([win, view, ticker, timer, OverlayView, Ticker])
+    return win
 
 
 # ---------------------------------------------------------------- Windows

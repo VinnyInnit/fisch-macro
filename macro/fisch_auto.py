@@ -158,7 +158,106 @@ def find_roblox_window():
 
 # ------------------------------------------------------------------ OCR
 
+_WIN_OCR = {}
+
+
+def _win_engine():
+    """Windows' built-in text recognition (Windows.Media.Ocr), or None."""
+    if "engine" in _WIN_OCR:
+        return _WIN_OCR["engine"]
+    eng = None
+    try:
+        from winrt.windows.media.ocr import OcrEngine
+        eng = OcrEngine.try_create_from_user_profile_languages()
+        if eng is None:
+            from winrt.windows.globalization import Language
+            eng = OcrEngine.try_create_from_language(Language("en-US"))
+    except Exception as e:
+        _WIN_OCR["error"] = repr(e)
+        eng = None
+    _WIN_OCR["engine"] = eng
+    return eng
+
+
+def _win_bitmap(img_rgb):
+    """numpy RGB -> SoftwareBitmap (BGRA8). pywinrt versions differ in how a byte buffer is
+    passed, so a few ways are tried; the one that works is remembered."""
+    from winrt.windows.graphics.imaging import SoftwareBitmap, BitmapPixelFormat, BitmapAlphaMode
+    h, w = img_rgb.shape[:2]
+    bgra = np.empty((h, w, 4), np.uint8)
+    bgra[:, :, 0] = img_rgb[:, :, 2]
+    bgra[:, :, 1] = img_rgb[:, :, 1]
+    bgra[:, :, 2] = img_rgb[:, :, 0]
+    bgra[:, :, 3] = 255
+    raw = bgra.tobytes()
+
+    def via_buffer():
+        from winrt.windows.storage.streams import Buffer
+        buf = Buffer(len(raw))
+        mv = memoryview(buf)
+        mv[:len(raw)] = raw
+        buf.length = len(raw)
+        return buf
+
+    def via_bytes():
+        return raw
+
+    def via_writer():
+        from winrt.windows.storage.streams import DataWriter
+        dw = DataWriter()
+        dw.write_bytes(raw)
+        return dw.detach_buffer()
+
+    ways = [via_bytes, via_buffer, via_writer]
+    if "way" in _WIN_OCR:
+        ways = [_WIN_OCR["way"]] + [f for f in ways if f is not _WIN_OCR["way"]]
+    last = None
+    for way in ways:
+        try:
+            bmp = SoftwareBitmap.create_copy_from_buffer(way(), BitmapPixelFormat.BGRA8, w, h,
+                                                        BitmapAlphaMode.PREMULTIPLIED)
+            _WIN_OCR["way"] = way
+            return bmp
+        except Exception as e:
+            last = e
+    raise RuntimeError(f"couldn't hand the image to Windows OCR: {last!r}")
+
+
+def _win_ocr(img_rgb):
+    eng = _win_engine()
+    if eng is None:
+        return []
+    import asyncio
+    h, w = img_rgb.shape[:2]
+    try:
+        from winrt.windows.media.ocr import OcrEngine
+        lim = int(OcrEngine.max_image_dimension or 0)
+    except Exception:
+        lim = 0
+    step = 1
+    if lim and max(h, w) > lim:
+        step = int(np.ceil(max(h, w) / lim))
+        img_rgb = np.ascontiguousarray(img_rgb[::step, ::step])
+    bmp = _win_bitmap(img_rgb)
+
+    async def go():
+        return await eng.recognize_async(bmp)
+    res = asyncio.run(go())
+    out = []
+    for line in res.lines:
+        xs0, ys0, xs1, ys1 = [], [], [], []
+        for wd in line.words:
+            r = wd.bounding_rect
+            xs0.append(r.x); ys0.append(r.y); xs1.append(r.x + r.width); ys1.append(r.y + r.height)
+        if not xs0:
+            continue
+        out.append((str(line.text), 0.9, (min(xs0) * step, min(ys0) * step, max(xs1) * step, max(ys1) * step)))
+    return out
+
+
 def ocr_available():
+    if sys.platform == "win32":
+        return _win_engine() is not None
     if sys.platform != "darwin":
         return False
     try:
@@ -172,6 +271,10 @@ def ocr(img_rgb, upscale=1):
     """Text lines in an RGB image: [(text, confidence, (x0, y0, x1, y1))] in image pixels."""
     if not ocr_available():
         return []
+    if sys.platform == "win32":
+        if upscale > 1:
+            img_rgb = np.repeat(np.repeat(img_rgb, upscale, axis=0), upscale, axis=1)
+        return [(t, c, tuple(v / upscale for v in b)) for t, c, b in _win_ocr(img_rgb)]
     import Vision
     from Foundation import NSData
     import mss.tools
@@ -205,6 +308,8 @@ def ocr_fast(img_rgb):
     image handed over directly (no PNG). Same output format as ocr()."""
     if not ocr_available():
         return []
+    if sys.platform == "win32":
+        return _win_ocr(img_rgb)
     try:
         import Vision
         import Quartz
