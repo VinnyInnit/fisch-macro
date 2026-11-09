@@ -33,7 +33,7 @@ ok = True
 print("platform", sys.platform, "| OCR available:", fa.ocr_available(), fa._WIN_OCR.get("error", ""))
 if sys.platform == "win32":
     fa._win_bitmap(np.zeros((8, 8, 3), np.uint8))
-    print("bitmap via:", getattr(fa._WIN_OCR.get("way"), "__name__", "?"))
+    print("bitmap via:", fa._WIN_OCR.get("way"))
 if not fa.ocr_available():
     print("FAIL: no text recognition")
     sys.exit(1)

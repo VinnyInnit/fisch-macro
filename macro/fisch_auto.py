@@ -209,15 +209,18 @@ def _win_bitmap(img_rgb):
         return dw.detach_buffer()
 
     ways = [via_buffer, via_writer, via_bytes]      # copies into Windows-owned memory first
-    if "way" in _WIN_OCR:
-        ways = [_WIN_OCR["way"]] + [f for f in ways if f is not _WIN_OCR["way"]]
+    # remember which one works by NAME: these functions hold this image's bytes, so keeping
+    # the function itself would hand every later read this same old picture
+    pref = _WIN_OCR.get("way")
+    if pref:
+        ways.sort(key=lambda f: f.__name__ != pref)
     last = None
     for way in ways:
         try:
             src = way()
             bmp = SoftwareBitmap.create_copy_from_buffer(src, BitmapPixelFormat.BGRA8, w, h,
                                                         BitmapAlphaMode.PREMULTIPLIED)
-            _WIN_OCR["way"] = way
+            _WIN_OCR["way"] = way.__name__
             _WIN_OCR["src"] = (src, raw)          # keep the source memory alive while it's read
             return bmp
         except Exception as e:
