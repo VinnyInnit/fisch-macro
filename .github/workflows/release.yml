@@ -1,10 +1,11 @@
 name: Build and release
 
-# Push a tag like v1.0.1 (matching macro/VERSION) to build both apps and publish a release.
-# "Run workflow" on the Actions tab builds everything without publishing (a test build).
+# Releasing = put a new number in macro/VERSION and push to main. This workflow then builds
+# both apps, creates the tag v<VERSION> and publishes the release. If that version is already
+# released, nothing is built. "Run workflow" on the Actions tab makes a test build (no release).
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -14,19 +15,38 @@ env:
   PY: "3.12"
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
+      build: ${{ steps.v.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="$(tr -d '[:space:]' < macro/VERSION)"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if gh release view "v$V" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "v$V is already released"; PUB=false
+          else
+            PUB=true
+          fi
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then PUB=false; BUILD=true; else BUILD=$PUB; fi
+          echo "publish=$PUB" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "version $V publish=$PUB build=$BUILD"
+
   payload:
+    needs: check
+    if: needs.check.outputs.build == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "${{ env.PY }}" }
-      - name: Tag must match macro/VERSION
-        if: github.ref_type == 'tag'
-        run: |
-          V="v$(cat macro/VERSION | tr -d '[:space:]')"
-          if [ "$V" != "${GITHUB_REF_NAME}" ]; then
-            echo "::error::macro/VERSION says $V but the tag is ${GITHUB_REF_NAME}"; exit 1
-          fi
       - run: pip install cryptography
       - name: Build and sign the update package
         env:
@@ -34,7 +54,7 @@ jobs:
         run: |
           NOTES=""
           if [ -f RELEASE_NOTES.txt ]; then NOTES="$(head -c 300 RELEASE_NOTES.txt)"; fi
-          python tools/make_payload.py --out dist --notes "$NOTES"
+          python tools/make_payload.py --out dist --min-shell 1 --notes "$NOTES"
       - uses: actions/upload-artifact@v4
         with: { name: payload, path: dist/ }
 
@@ -104,8 +124,8 @@ jobs:
         with: { name: windows, path: FischMacro-Windows.exe }
 
   release:
-    if: github.ref_type == 'tag'
-    needs: [payload, mac, windows]
+    if: needs.check.outputs.publish == 'true'
+    needs: [check, payload, mac, windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -117,6 +137,7 @@ jobs:
         run: |
           NOTES="Download **FischMacro-Mac.zip** (Mac) or **FischMacro-Windows.exe** (Windows). Installed apps update themselves."
           if [ -f RELEASE_NOTES.txt ]; then NOTES="$(cat RELEASE_NOTES.txt)"$'\n\n'"$NOTES"; fi
-          gh release create "${GITHUB_REF_NAME}" --title "Fisch Macro ${GITHUB_REF_NAME}" --notes "$NOTES" \
+          TAG="v${{ needs.check.outputs.version }}"
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "Fisch Macro $TAG" --notes "$NOTES" \
             out/mac/FischMacro-Mac.zip out/windows/FischMacro-Windows.exe \
             out/payload/latest.json out/payload/payload-*.zip
