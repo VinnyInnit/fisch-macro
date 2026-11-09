@@ -1,1 +1,1 @@
-v1.1.1: a 'Fix permissions' button for when macOS ignores switches you already turned on (they belonged to an older copy of the app).
+v1.2.0: the app is now called Fischeroo, with a new icon. On Mac it installs itself into Applications, so permissions stick. Please download it once from the releases page.

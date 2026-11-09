@@ -419,7 +419,7 @@ def jsonable_det(det):
 
 def page_html():
     quit_how = "the Quit button, or Cmd+Q in its menu" if IN_APP else "Cmd+Q on Terminal"
-    open_how = "Fisch Macro" if IN_APP else 'the "Start Fisch Macro" launcher'
+    open_how = HOST_APP if IN_APP else 'the "Start Fisch Macro" launcher'
     return PAGE.replace("__HOST__", HOST_APP).replace("__QUIT__", quit_how).replace("__OPEN__", open_how)
 
 
@@ -496,7 +496,7 @@ def make_handler(app, server_ref):
                     return self.send(200, {"ok": True, "busy": not started})
                 if self.path == "/api/fix_permissions":
                     ok, msg = fp.reset_permissions()
-                    app.log("Permissions: " + msg + (" - switch Fisch Macro on in the lists, then quit and reopen"
+                    app.log("Permissions: " + msg + (" - switch " + HOST_APP + " on in the lists, then quit and reopen"
                                                      if ok else ""))
                     if ok:
                         fp.open_settings("accessibility")
@@ -601,7 +601,7 @@ FAVICON = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
 PAGE = r"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Fisch Macro</title>
+<title>Fischeroo</title>
 <style>
 :root{--bg:#0d1b24;--panel:#13262f;--line:#22404c;--ink:#e8f1f2;--dim:#8fa9b0;--accent:#3ec7b5;--warn:#f2b84b;--bad:#ef6b5b;--good:#5fd38d}
 *{box-sizing:border-box}
@@ -648,7 +648,7 @@ ul.check{margin:0;padding-left:18px} ul.check li{margin:4px 0}
 </style></head><body><main>
 
 <header>
-  <h1>🎣 Fisch Macro</h1>
+  <h1>🎣 Fischeroo</h1>
   <span id="phase" class="pill">idle</span>
   <span class="count">Perfect: <b id="perfect">0</b> / <b id="catches">0</b> reels</span>
   <span class="hint" id="ver" style="margin-left:auto"></span>
@@ -998,12 +998,12 @@ $('#saveBtn').onclick = async () => {
 };
 $('#quitBtn').onclick = async () => {
   const inApp = S && S.host && S.host !== 'Terminal';      // the app window may not show browser dialogs
-  if (!inApp && !confirm('Quit Fisch Macro?')) return;
+  if (!inApp && !confirm('Quit Fischeroo?')) return;
   await api('/api/quit', {}).catch(() => {});
-  document.body.innerHTML = '<main><h1>Fisch Macro closed</h1><p class="hint">You can close this tab.</p></main>';
+  document.body.innerHTML = '<main><h1>Fischeroo closed</h1><p class="hint">You can close this tab.</p></main>';
 };
 $('#quitTop').onclick = () => { api('/api/quit', {}).then(() => {
-  document.body.innerHTML = '<main><h1>Fisch Macro closed</h1><p class="hint">You can close this tab.</p></main>'; }); };
+  document.body.innerHTML = '<main><h1>Fischeroo closed</h1><p class="hint">You can close this tab.</p></main>'; }); };
 $('#fixPermBtn').onclick = () => api('/api/fix_permissions', {});
 poll();
 </script></body></html>

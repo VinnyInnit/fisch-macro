@@ -1,8 +1,8 @@
 """
-Fisch Macro app launcher (this is what the .app / .exe runs).
+Fischeroo app launcher (this is what the .app / .exe runs).
 
 The app itself rarely changes; the macro code ("payload") updates itself:
-  1. If Fisch Macro is already running, just open its window and quit.
+  1. If Fischeroo is already running, just open its window and quit.
   2. Pick the newest payload: the one built into the app, or one downloaded earlier.
   3. Ask GitHub for the latest release's latest.json. If it's newer, download the payload,
      check its SHA-256 and its Ed25519 signature against the key built into this app, and
@@ -43,8 +43,15 @@ def data_dir():
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
     else:
         base = os.path.expanduser("~/.local/share")
-    d = os.path.join(base, "FischMacro")
-    os.makedirs(d, exist_ok=True)
+    d = os.path.join(base, "Fischeroo")
+    if not os.path.exists(d):
+        os.makedirs(d, exist_ok=True)
+        old = os.path.join(base, "FischMacro")          # the app's old name: keep the user's settings
+        try:
+            if os.path.exists(os.path.join(old, "fisch_config.json")):
+                shutil.copy2(os.path.join(old, "fisch_config.json"), os.path.join(d, "fisch_config.json"))
+        except OSError:
+            pass
     return d
 
 
@@ -254,9 +261,88 @@ def selftest():
     sys.exit(code)
 
 
+# ------------------------------------------------- macOS "App Translocation"
+
+def _translocated_original(bundle):
+    """macOS runs a downloaded app that wasn't moved out of its download folder from a random
+    read-only copy (App Translocation). Returns the real .app path, or None."""
+    import ctypes
+    sec = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/Security.framework/Security")
+    cf = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+    cf.CFURLCreateFromFileSystemRepresentation.restype = ctypes.c_void_p
+    cf.CFURLCreateFromFileSystemRepresentation.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_long,
+                                                           ctypes.c_bool]
+    cf.CFURLGetFileSystemRepresentation.restype = ctypes.c_bool
+    cf.CFURLGetFileSystemRepresentation.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_char_p, ctypes.c_long]
+    cf.CFRelease.argtypes = [ctypes.c_void_p]
+    sec.SecTranslocateCreateOriginalPathForURL.restype = ctypes.c_void_p
+    sec.SecTranslocateCreateOriginalPathForURL.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    raw = bundle.encode()
+    url = cf.CFURLCreateFromFileSystemRepresentation(None, raw, len(raw), True)
+    if not url:
+        return None
+    try:
+        orig = sec.SecTranslocateCreateOriginalPathForURL(url, None)
+        if not orig:
+            return None
+        try:
+            buf = ctypes.create_string_buffer(4096)
+            if cf.CFURLGetFileSystemRepresentation(orig, True, buf, 4096):
+                return buf.value.decode()
+        finally:
+            cf.CFRelease(orig)
+    finally:
+        cf.CFRelease(url)
+    return None
+
+
+def fix_translocation():
+    """If macOS is running us from a random temporary copy, install the app into Applications
+    and restart from there. Permissions then stick, and the app has one fixed home."""
+    if sys.platform != "darwin" or not getattr(sys, "frozen", False):
+        return
+    exe = os.path.realpath(sys.executable)
+    if ".app/" not in exe:
+        return
+    bundle = exe.split(".app/")[0] + ".app"
+    if "/AppTranslocation/" not in bundle:
+        return
+    import subprocess
+    try:
+        original = _translocated_original(bundle)
+    except Exception as e:
+        log(f"translocation: couldn't find the original ({e!r})")
+        return
+    if not original or not os.path.isdir(original):
+        log("translocation: original not found")
+        return
+    for apps in ("/Applications", os.path.expanduser("~/Applications")):
+        dest = os.path.join(apps, f"{APP_NAME}.app")
+        try:
+            os.makedirs(apps, exist_ok=True)
+            if os.path.realpath(original) != os.path.realpath(dest):
+                tmp = dest + ".installing"
+                shutil.rmtree(tmp, ignore_errors=True)
+                subprocess.run(["ditto", original, tmp], check=True, capture_output=True, timeout=120)
+                shutil.rmtree(dest, ignore_errors=True)
+                os.replace(tmp, dest)
+            # the user already chose to open it ("Open Anyway"): drop the download flag so macOS
+            # stops relocating it on every launch
+            subprocess.run(["xattr", "-dr", "com.apple.quarantine", dest], capture_output=True, timeout=60)
+            log(f"installed into {dest}; restarting from there")
+            subprocess.Popen(["open", "-n", dest])
+            sys.exit(0)
+        except SystemExit:
+            raise
+        except Exception as e:
+            log(f"couldn't install into {apps}: {e!r}")
+            continue
+
+
 def main():
     if "--selftest" in sys.argv:
         selftest()
+    fix_translocation()
     if already_running():
         return
     os.makedirs(PAYLOADS, exist_ok=True)

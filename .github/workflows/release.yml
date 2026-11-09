@@ -54,7 +54,7 @@ jobs:
         run: |
           NOTES=""
           if [ -f RELEASE_NOTES.txt ]; then NOTES="$(head -c 300 RELEASE_NOTES.txt)"; fi
-          python tools/make_payload.py --out dist --min-shell 2 --notes "$NOTES"
+          python tools/make_payload.py --out dist --min-shell 3 --notes "$NOTES"
       - uses: actions/upload-artifact@v4
         with: { name: payload, path: dist/ }
 
@@ -79,23 +79,24 @@ jobs:
       - name: Permission prompts can be called on macOS
         run: |
           python -c "import sys; sys.path.insert(0, 'macro'); import fisch_platform as fp; fp.request_accessibility_prompt(strict=True); print('permission prompt call OK', fp.permissions())"
-      - name: Build Fisch Macro.app
+          python -c "import sys; sys.path.insert(0, 'launcher'); import launcher as L; print('translocation check OK:', L._translocated_original('/Applications/Safari.app'))"
+      - name: Build Fischeroo.app
         run: |
-          pyinstaller --noconfirm --windowed --name "Fisch Macro" \
-            --osx-bundle-identifier com.vinnyinnit.fischmacro \
+          pyinstaller --noconfirm --windowed --name "Fischeroo" --icon assets/icon.icns \
+            --osx-bundle-identifier com.vinnyinnit.fischeroo \
             --paths launcher --add-data "build/payload:payload" \
             --hidden-import bundle_imports --collect-submodules pynput --collect-submodules mss \
             --collect-submodules webview --collect-data certifi launcher/launcher.py
-          codesign --force --deep --sign - "dist/Fisch Macro.app"
+          codesign --force --deep --sign - "dist/Fischeroo.app"
       - name: Self-test the built app
         run: |
-          FISCH_SELFTEST_OUT="$PWD/selftest.txt" "dist/Fisch Macro.app/Contents/MacOS/Fisch Macro" --selftest || true
+          FISCH_SELFTEST_OUT="$PWD/selftest.txt" "dist/Fischeroo.app/Contents/MacOS/Fischeroo" --selftest || true
           cat selftest.txt
           grep -q '^OK' selftest.txt
       - name: Zip
-        run: ditto -c -k --keepParent "dist/Fisch Macro.app" FischMacro-Mac.zip
+        run: ditto -c -k --keepParent "dist/Fischeroo.app" Fischeroo-Mac.zip
       - uses: actions/upload-artifact@v4
-        with: { name: mac, path: FischMacro-Mac.zip }
+        with: { name: mac, path: Fischeroo-Mac.zip }
 
   windows:
     needs: payload
@@ -116,9 +117,9 @@ jobs:
             winrt-Windows.Foundation winrt-Windows.Foundation.Collections winrt-Windows.Globalization
       - name: Text reading works on Windows
         run: pip install pillow && python tools/ci_ocr_test.py
-      - name: Build FischMacro.exe
+      - name: Build Fischeroo.exe
         run: |
-          pyinstaller --noconfirm --onefile --noconsole --name "FischMacro" \
+          pyinstaller --noconfirm --onefile --noconsole --name "Fischeroo" --icon assets/icon.ico \
             --paths launcher --add-data "build/payload;payload" \
             --hidden-import bundle_imports --collect-submodules pynput --collect-submodules mss \
             --collect-all webview --collect-all clr_loader --collect-all pythonnet --hidden-import clr \
@@ -126,14 +127,14 @@ jobs:
       - name: Self-test the built exe
         run: |
           export FISCH_SELFTEST_OUT="$PWD/selftest.txt"
-          ./dist/FischMacro.exe --selftest || true
+          ./dist/Fischeroo.exe --selftest || true
           for i in 1 2 3 4 5 6 7 8 9 10; do [ -f selftest.txt ] && break; sleep 2; done
           cat selftest.txt
           grep -q '^OK' selftest.txt
       - name: Rename
-        run: mv dist/FischMacro.exe FischMacro-Windows.exe
+        run: mv dist/Fischeroo.exe Fischeroo-Windows.exe
       - uses: actions/upload-artifact@v4
-        with: { name: windows, path: FischMacro-Windows.exe }
+        with: { name: windows, path: Fischeroo-Windows.exe }
 
   release:
     if: needs.check.outputs.publish == 'true'
@@ -147,9 +148,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          NOTES="Download **FischMacro-Mac.zip** (Mac) or **FischMacro-Windows.exe** (Windows). Installed apps update themselves."
+          NOTES="Download **Fischeroo-Mac.zip** (Mac: unzip, drag Fischeroo into Applications) or **Fischeroo-Windows.exe** (Windows). Installed apps update themselves."
           if [ -f RELEASE_NOTES.txt ]; then NOTES="$(cat RELEASE_NOTES.txt)"$'\n\n'"$NOTES"; fi
           TAG="v${{ needs.check.outputs.version }}"
-          gh release create "$TAG" --target "$GITHUB_SHA" --title "Fisch Macro $TAG" --notes "$NOTES" \
-            out/mac/FischMacro-Mac.zip out/windows/FischMacro-Windows.exe \
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "Fischeroo $TAG" --notes "$NOTES" \
+            out/mac/Fischeroo-Mac.zip out/windows/Fischeroo-Windows.exe \
             out/payload/latest.json out/payload/payload-*.zip

@@ -71,7 +71,7 @@ def open_settings(which):
     return False
 
 
-APP_BUNDLE_ID = "com.vinnyinnit.fischmacro"
+APP_BUNDLE_IDS = ("com.vinnyinnit.fischeroo", "com.vinnyinnit.fischmacro")   # new name, old name
 
 
 def running_app():
@@ -112,11 +112,11 @@ def request_all_prompts():
 
 def reset_permissions():
     """When the switches are on but don't work: they belong to an older copy of the app
-    (macOS ties them to the exact build). Remove Fisch Macro's old entries, then ask macOS
+    (macOS ties them to the exact build). Remove this app's old entries, then ask macOS
     to add fresh ones for this copy. Only ever touches this app's own entries."""
     bid, path = running_app()
-    if bid != APP_BUNDLE_ID:
-        return False, "only available in the Fisch Macro app"
+    if bid not in APP_BUNDLE_IDS:
+        return False, "only available in the Fischeroo app"
     done = []
     for service in ("Accessibility", "ScreenCapture", "ListenEvent"):
         try:

@@ -32,7 +32,7 @@ def run(url, app, overlay=True, log=print):
         return False
     opened = threading.Event()
     try:
-        win = webview.create_window("Fisch Macro", url, width=1000, height=880, min_size=(640, 520),
+        win = webview.create_window("Fischeroo", url, width=1000, height=880, min_size=(640, 520),
                                     background_color="#0e1116", text_select=True)
     except Exception as e:
         log(f"App window unavailable ({e!r}); using your browser instead")
