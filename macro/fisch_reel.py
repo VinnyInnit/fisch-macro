@@ -27,8 +27,9 @@ PROFILE_DEFAULTS = {
     "pinion_fall_speed": 0.65,     # default note fall speed (screen heights / s) until measured
     "pinion_note_margin": 0.03,    # keep notes this far inside the bar edges
     "pinion_note_inner": 0.5,      # how far from the bar centre a note may land (0 = dead centre)
-    "pinion_commit_buffer": 0.3,   # extra seconds of safety when heading over to a note
-    "pinion_center_pull": 0.4,     # 0 = follow the fish freely between notes, 1 = wait mid-track
+    "pinion_commit_buffer": 0.25,  # extra seconds of safety when heading over to a note
+    "pinion_center_pull": 0.4,     # (old) 0 = follow the fish freely between notes, 1 = wait mid-track
+    "pinion_ready": 1.0,           # 1 = always stay able to reach the next note wherever it lands
     # Remembrance
     "avoid_margin": 0.03,          # keep the dark fish this far outside the bar
     # Controller
@@ -363,9 +364,17 @@ class ReelController:
                 match.update(x=0.7 * match["x"] + 0.3 * n["x"], dist=n["dist"], t=now)
                 new.append(match)
             else:
-                new.append({"x": n["x"], "dist": n["dist"], "speed": fall0, "t": now})
+                new.append({"x": n["x"], "dist": n["dist"], "speed": fall0, "t": now, "first": n["dist"]})
+                sp = getattr(self, "_spawns", [])
+                if not sp or now - sp[-1] > 0.25:
+                    sp.append(now)
+                self._spawns = sp[-8:]
         # notes that vanished: did they land in the bar?
         for old in self.notes:
+            if old not in new and old["dist"] < 0.06 and old.get("first"):
+                w = old["first"] / max(old["speed"], 0.05)       # warning this note gave us
+                pw = getattr(self, "_note_warning", None)
+                self._note_warning = w if pw is None else 0.7 * pw + 0.3 * w
             if old not in new and old["dist"] < 0.06 and self.prev is not None:
                 c = self.prev[1]
                 if self.width and abs(old["x"] - c) <= self.width / 2:
@@ -413,6 +422,16 @@ class ReelController:
         self.last_fish = fish
         if not locked and not (bl <= fish <= br):
             self.frames_out += 1
+        # rough running estimate of the catch progress bar (fills while the fish is in the bar,
+        # drains while it's out; each Pinion note caught/missed changes the fill speed)
+        if not hasattr(self, "progress"):
+            self.progress, self._prog_t = 0.3, now
+        dtp = max(0.0, min(0.2, now - self._prog_t))
+        self._prog_t = now
+        if not locked:
+            mult = max(0.2, 1 + 0.05 * self.notes_caught - 0.10 * self.notes_missed)
+            self.progress += (0.12 * mult if bl <= fish <= br else -0.12) * dtp
+            self.progress = min(1.0, max(0.0, self.progress))
         if not locked and any(bl <= a <= br for a in det.get("avoid", [])):
             self.frames_avoid_in += 1
         if self.profile == "pinion":
@@ -462,25 +481,99 @@ class ReelController:
         if self.profile == "remembrance" and det.get("avoid"):
             tgt = _remembrance_target(fish, det["avoid"], half, self.opt("avoid_margin"), tgt)
         if self.profile == "pinion":
-            # between notes, don't follow the fish all the way to an edge: the next note could
-            # land anywhere, and missing a note is what breaks a Pinion's Aria perfect catch
-            r = max(0.0, (0.5 - half) * (1 - self.opt("pinion_center_pull")))
-            tgt = min(max(tgt, 0.5 - half - r + half), 0.5 + r) if r < 0.5 - half else tgt
-        if self.profile == "pinion" and self.notes:
-            # the next note to land decides where we must be; keep the fish in too if possible
-            nm = self.opt("pinion_note_margin")
-            soon = min(self.notes, key=lambda n: n["dist"] / max(n["speed"], 0.05))
-            t_land = soon["dist"] / max(soon["speed"], 0.05)
-            nx = soon["x"]
-            m = self.model
-            vmax = max(0.05, min(m.a_hold, m.a_rel) / max(m.k, 0.3))
-            gap = max(0.0, abs(nx - (self.prev[1] if self.prev else 0.5)) - (half - nm) * 0.5)
-            need = gap / (0.7 * vmax) + 0.25 + lat + self.opt("pinion_commit_buffer")
-            if t_land < min(self.opt("plan_horizon") + lat, need):
-                # keep the note in the inner part of the bar; lean toward the fish when there's room
-                room = max(0.0, (half - nm) * self.opt("pinion_note_inner"))
-                tgt = nx + min(max(tgt - nx, -room), room)
-        return min(max(tgt, lo), hi)
+            lo, hi = self._pinion_window(now, lat, lo, hi)
+        out = min(max(tgt, lo), hi)
+        self._clamped = abs(out - tgt) > 1e-6          # held at a note's window edge, not on the fish
+        return out
+
+    def _reach(self, T):
+        """How far the bar can travel in T seconds from standing still and stop there
+        (full push, then brake), using the bar physics learned during this reel."""
+        if T <= 0:
+            return 0.0
+        m = self.model
+        key = (round(m.a_hold, 2), round(m.a_rel, 2), round(m.k, 2))
+        tab = getattr(self, "_reach_tab", None)
+        if tab is None or tab[0] != key:
+            dt, a, k = 0.01, min(m.a_hold, m.a_rel), max(m.k, 1e-3)
+            best = [0.0] * 301                          # best distance for T = 0 .. 3 s
+            for n_push in range(0, 301):
+                x = v = 0.0
+                for _ in range(n_push):                  # push
+                    v += (a - k * v) * dt
+                    x += v * dt
+                steps = n_push
+                while v > 0 and steps < 300:             # brake to a stop
+                    v += (-a - k * v) * dt
+                    x += max(v, 0.0) * dt
+                    steps += 1
+                if steps <= 300:
+                    best[steps] = max(best[steps], x)
+            for i in range(1, 301):                      # more time never means less reach
+                best[i] = max(best[i], best[i - 1])
+            tab = self._reach_tab = (key, best)
+        return tab[1][min(300, int(T / 0.01))]
+
+    def _pinion_window(self, now, lat, lo, hi):
+        """Pinion's Aria: every note must land inside the bar, but the fish must stay in it as
+        much as possible too (progress drains while it's out and the catch fails at zero).
+        For each upcoming note, the bar centre has to end up within (half - margin) of where it
+        lands, and we can only cover ~reach(time left) on the way. So the positions we may be at
+        NOW are each note's catch zone widened by how far we can still travel before it lands.
+        Intersecting these over the next notes gives a window; the bar follows the fish inside
+        it. Far-off notes give a wide window (chase the fish freely); as a note gets close the
+        window closes around it, so the bar sets off just early enough - not earlier. If two
+        notes can't both be made, the earlier one wins."""
+        half = self.width / 2
+        # The fish either drifts toward the bar (then staying ready for notes costs little:
+        # aim notes at the bar's middle, keep a safety buffer, stay in reach of the next one) or
+        # wanders on its own (then every moment away from it drains progress: let notes land
+        # nearer the edge and chase the fish freely between them). Which one comes from the rod's
+        # wiki data ("fish follows bar" for Pinion's Aria), set when the rod is detected.
+        follows = bool(self.cfg.get("fish_follows_bar", True))
+        inner = self.opt("pinion_note_inner") if follows else 0.85
+        buf = self.opt("pinion_commit_buffer") if follows else 0.12
+        ready_on = self.opt("pinion_ready") > 0 and follows
+        margin = max(self.opt("pinion_note_margin"), (1 - inner) * half)
+        upcoming = sorted(self.notes, key=lambda n: n["dist"] / max(n["speed"], 0.05))[:4]
+        for n in upcoming:
+            t_land = n["dist"] / max(n["speed"], 0.05)
+            left = t_land - lat - buf
+            reach = 0.92 * self._reach(left)
+            zlo = max(half, n["x"] - (half - margin))
+            zhi = min(1 - half, n["x"] + (half - margin))
+            if zlo > zhi:                                # note right at a wall: bar against that wall
+                zlo = zhi = min(max(n["x"], half), 1 - half)
+            nlo, nhi = max(lo, zlo - reach), min(hi, zhi + reach)
+            if nlo > nhi:
+                break                                    # can't make this one as well: earlier notes win
+            lo, hi = nlo, nhi
+        # lowest priority: stay ready for the NEXT note (not on screen yet). Notes come in a
+        # rhythm (every ~2 s, speeding up to ~1 s) and give ~1 s warning, so we may wander after
+        # the fish only as far as we could get back from by the time the next one lands.
+        if ready_on:
+            warn = getattr(self, "_note_warning", None) or 0.85      # seconds a note is visible
+            spawns = getattr(self, "_spawns", [])
+            gap = 1.5
+            if len(spawns) >= 2:
+                diffs = sorted(b - a for a, b in zip(spawns[-5:], spawns[-4:]))
+                gap = diffs[len(diffs) // 2]
+            last = spawns[-1] if spawns else (self.t0 or now)
+            until = max(0.0, last + 0.8 * gap - now)                  # next note could show up then
+            R = 0.92 * self._reach(until + warn - lat - buf) + (1 - self.opt("pinion_ready")) * 0.5
+            # if the catch itself is in danger (progress running low), the fish comes first
+            p_ = getattr(self, "progress", 0.3)
+            if p_ < 0.45:
+                R += (0.45 - p_) / 0.2 * 0.6
+            span_lo = 0.03 + (half - margin)             # catch zones of notes at the walls
+            span_hi = 0.97 - (half - margin)
+            rlo, rhi = span_hi - R, span_lo + R
+            if rlo > rhi:                                # can't cover both walls in time: middle
+                rlo = rhi = 0.5
+            if max(lo, rlo) <= min(hi, rhi):
+                lo, hi = max(lo, rlo), min(hi, rhi)
+            # else: notes on screen need us elsewhere - they win
+        return lo, hi
 
     def _pursue(self, c, fish, det, now):
         """Bang-bang chase with braking: accelerate toward the target and start braking
@@ -494,7 +587,7 @@ class ReelController:
             x, v = _wall(x + v * self.DT, v, half)
         tgt = self._target(fish, det, now)
         self.target = tgt
-        vt = self.fish_vel if self.profile != "pinion" or not self.notes else 0.0
+        vt = 0.0 if getattr(self, "_clamped", False) else self.fish_vel
         e = tgt - x
         vr = v - vt
         if e > 0:

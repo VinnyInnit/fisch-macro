@@ -36,6 +36,88 @@ def _norm(s):
 _ROD_NORM = {_norm(n): n for n in ROD_NAMES}
 _ENCH_NORM = {_norm(n): n for n in DATA["enchants"]}
 _AREA_NORM = {_norm(n): n for n in DATA["areas"]}
+_BAIT_NORM = {_norm(n): n for n in DATA.get("baits", {})}
+WEATHER_WORDS = [  # words in on-screen announcements -> weather
+    (r"\brain(ing|y|s)?\b|\btempest\b", "Rain"), (r"\bfog(gy)?\b", "Foggy"), (r"\bwindy?\b", "Windy"),
+    (r"\bstarfall\b", "Starfall"), (r"\btornado\b", "Tornado"), (r"\baurora borealis\b", "Aurora Borealis"),
+    (r"\brainbow\b", "Rainbow"), (r"\beclipse\b", "Eclipse"), (r"\bclear (sky|skies|weather)\b", "Clear")]
+
+
+def read_bait(lines):
+    """'Current Bait: Mist Worms [x444]' in the hotbar text -> 'Mist Worms'."""
+    for text, _, _ in lines:
+        m = re.search(r"bait\s*[:;]\s*(.+)", text, re.I)
+        if m:
+            name = re.split(r"[\[\(\{]", m.group(1))[0].strip()
+            hit = match(name, _BAIT_NORM, 0.8)
+            if hit:
+                return hit
+    return None
+
+
+def read_weather(lines, rod=None):
+    """Weather named in announcements (top of the screen). Fisch shows the current weather as an
+    icon, so this only catches it when it's written somewhere; otherwise None."""
+    skip = {_norm(rod)} if rod else set()
+    for text, _, _ in lines:
+        t = text.lower()
+        if "bait" in t or "rod" in t or "totem" in t and "used" not in t or _norm(text) in skip:
+            continue
+        for pat, name in WEATHER_WORDS:
+            if re.search(pat, t):
+                return name
+    return None
+
+
+def effective_stats(rod, enchants=(), bait=None, weather=None):
+    """What the game actually uses: rod stats plus enchants, bait and weather (from the data
+    tables). Returns lure %, control, resilience %, progress %, bar width and notes."""
+    if not rod:
+        return None
+    try:
+        res0 = float(rod.get("resilience") or 0)
+    except ValueError:
+        res0 = 0.0
+    out = {"lure": rod.get("lure"), "control": rod["control"], "resilience": res0, "progress": 0.0,
+           "fish_follows_bar": "fish_follows_bar" in rod["flags"], "calmer_fish": False, "parts": []}
+    lure = out["lure"] if out["lure"] is not None else None
+
+    def add(src, st):
+        nonlocal lure
+        if not st:
+            return
+        bits = []
+        if st.get("lure"):
+            lure = (lure or 0) + st["lure"]
+            bits.append(f"lure {st['lure']:+g}%")
+        if st.get("control"):
+            out["control"] += st["control"]
+            bits.append(f"control {st['control']:+g}")
+        if st.get("resilience"):
+            out["resilience"] += st["resilience"]
+        if st.get("progress"):
+            out["progress"] += st["progress"]
+        if st.get("fish_follows_bar"):
+            out["fish_follows_bar"] = True
+            bits.append("pulls the fish to the bar")
+        if st.get("calmer_fish"):
+            out["calmer_fish"] = True
+        if bits:
+            out["parts"].append(f"{src}: " + ", ".join(bits))
+
+    for e in [e for e in enchants if e]:
+        st = dict(DATA.get("enchant_stats", {}).get(e, {}))
+        cond = st.pop("weather", {})
+        if weather and weather in cond:          # e.g. Breezed in Windy, Storming in Rain
+            st.update(cond[weather])
+        add(e, st)
+    if bait:
+        add(f"bait {bait}", DATA.get("baits", {}).get(bait))
+    if weather:
+        add(f"{weather} weather", DATA.get("weather", {}).get(weather))
+    out["lure"] = lure
+    out["bar_width"] = max(0.02, min(1.0, 0.30 + out["control"]))
+    return out
 
 
 def match(text, table, cutoff):
@@ -64,13 +146,25 @@ def match(text, table, cutoff):
 def rod_info(name):
     if not name or name not in DATA["rods"]:
         return None
-    control, resil, flags = DATA["rods"][name]
+    row = DATA["rods"][name]
+    control, resil, flags = row[0], row[1], row[2]
+    lure = row[3] if len(row) > 3 else None
     try:
         c = float(control)
     except ValueError:
         c = 0.0
     return {"name": name, "control": c, "resilience": resil, "flags": flags.split() if flags else [],
-            "bar_width": max(0.02, min(1.0, 0.30 + c))}
+            "bar_width": max(0.02, min(1.0, 0.30 + c)), "lure": lure}
+
+
+def lure_wait(lure):
+    """Longest normal wait (s) for a bite with this lure speed (%), shaking all the way.
+    Lure speed scales how fast the fish is lured: 100% = baseline, 15% = much slower,
+    negative = slower still. Generous on purpose: only used to give up on a dead cast."""
+    if lure is None:
+        return 40.0
+    mult = max(0.15, 1 + float(lure) / 100)
+    return max(15.0, min(150.0, 30.0 * 2.0 / mult))
 
 
 def mode_for(rod, area=None):
@@ -478,9 +572,11 @@ def identify(win_img):
                 result["enchant2"] = ench[1]
         elif rest:
             result["raw"]["above_rod"] = rest
+    result["bait"] = read_bait(lines)
     # area: big title near the top of the screen, usually in [brackets]
     top = ocr(win_img[: int(H * 0.22)], upscale=1)
     result["raw"]["top"] = [t for t, _, _ in top]
+    result["weather"] = read_weather(top, result.get("rod"))
     for text, conf, box in sorted(top, key=lambda l: -(l[2][3] - l[2][1])):  # biggest text first
         inner = re.findall(r"\[([^\]]+)\]", text)
         for cand in (inner or [text]):

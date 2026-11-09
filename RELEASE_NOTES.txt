@@ -1,1 +1,1 @@
-v1.2.0: the app is now called Fischeroo, with a new icon. On Mac it installs itself into Applications, so permissions stick. Please download it once from the releases page.
+v1.3.0: reads both enchants, your bait and the weather and adjusts for them (lure speed, bar size); keeps shaking for slow-lure rods instead of recasting early; smarter Pinion's Aria note catching that keeps the fish in the bar.

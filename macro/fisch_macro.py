@@ -105,7 +105,9 @@ DEFAULTS = {
     "shake_press_interval": 0.12,
     "shake_region": None,       # [x1, y1, x2, y2] for click mode (None = whole main screen)
     "shake_color": [255, 255, 255], "shake_tolerance": 8,
-    "shake_timeout": 25,        # no reel this long after casting -> cast again
+    "shake_timeout": 25,        # no reel this long after casting -> cast again (minimum; see below)
+    "shake_timeout_auto": True, # wait longer for rods with slow lure speed (from the rod's wiki stats)
+    "weather": "auto",          # auto (read from the screen when shown) or Clear/Rain/Windy/Foggy/Starfall/Tornado...
 
     "reel_timeout": 90,
     "reel_lost_seconds": 0.5,   # reel considered over after bar is gone this long
@@ -404,6 +406,7 @@ class Macro:
         self._stream_logged = False
         self._slow_reels = 0
         self.last_shakes = 0
+        self._shake_works = False      # set once a Shake button has been found this session
         self._seen = []
         self._ident_lock = threading.Lock()
         self.phase = "idle"
@@ -531,13 +534,26 @@ class Macro:
             return ident
         rod = fa.rod_info(ident.get("rod"))
         mode, notes = fa.mode_for(rod, ident.get("area"))
-        ident.update(rod_info=rod, mode=mode, notes=notes)
+        # weather: what the screen said, or the Weather setting when it's set by hand
+        wset = self.cfg.get("weather", "auto")
+        if wset and wset != "auto":
+            ident["weather"] = wset
+        elif not ident.get("weather"):
+            ident["weather"] = (self.ident or {}).get("weather_seen")    # keep the last one read
+        if ident.get("weather"):
+            ident["weather_seen"] = ident["weather"]
+        eff = fa.effective_stats(rod, [ident.get("enchant"), ident.get("enchant2")], ident.get("bait"),
+                                 ident.get("weather"))
+        ident.update(rod_info=rod, mode=mode, notes=notes, effective=eff)
         old = self.ident or {}
-        changed = any(old.get(k) != ident.get(k) for k in ("rod", "enchant", "enchant2", "area", "error"))
+        changed = any(old.get(k) != ident.get(k) for k in ("rod", "enchant", "enchant2", "bait", "weather",
+                                                          "area", "error"))
         self.ident, self.ident_t = ident, time.time()
         if self.cfg.get("auto", True):
             self.cfg["rod"] = mode
-            self.cfg["expected_bar_w"] = rod["bar_width"] if rod else None
+            # bar size from Control including enchants (Herculean, Controlled, Tryhard...)
+            self.cfg["expected_bar_w"] = eff["bar_width"] if eff else None
+            self.cfg["fish_follows_bar"] = bool(eff and eff["fish_follows_bar"])
             shaky = any("shakes" in n for n in notes) or (rod and "shaking_minigame" in rod["flags"])
             self.cfg["scan_half_height"] = 8 if shaky else DEFAULTS["scan_half_height"]
         if not changed:
@@ -548,11 +564,18 @@ class Macro:
             bits = [ident.get("rod") or "rod not recognised"]
             if ident.get("enchant"):
                 bits.append(f"enchant {ident['enchant']}" + (f" + {ident['enchant2']}" if ident.get("enchant2") else ""))
+            if ident.get("bait"):
+                bits.append(f"bait {ident['bait']}")
+            if ident.get("weather"):
+                bits.append(f"{ident['weather']} weather")
             if ident.get("area"):
                 bits.append(f"in {ident['area']}")
-            if rod:
-                bits.append(f"Control {rod['control']:+g} (bar {rod['bar_width'] * 100:.0f}%), Resilience {rod['resilience']}%")
+            if eff:
+                lure = f"lure speed {eff['lure']:g}%" if eff["lure"] is not None else "lure speed unknown"
+                bits.append(f"{lure}, bar {eff['bar_width'] * 100:.0f}% (Control {eff['control']:+.2f})")
             self.log("Detected: " + ", ".join(bits))
+            if eff and eff["parts"]:
+                self.log("  adjusted for " + "; ".join(eff["parts"]))
             for n in notes:
                 self.log(n)
         return ident
@@ -720,6 +743,10 @@ class Macro:
         last_button = 0.0
         shakes = 0
         self._seen = []
+        limit = self.cfg["shake_timeout"]
+        lure = ((self.ident or {}).get("effective") or {}).get("lure")       # rod + enchants + bait + weather
+        if self.cfg.get("shake_timeout_auto", True) and lure is not None:
+            limit = max(limit, fa.lure_wait(lure))   # slow-luring rods need longer for a bite
         try:
             while self.alive():
                 now = time.time()
@@ -733,9 +760,22 @@ class Macro:
                     next_locate = now + (1.0 if known else 0.25)
                     if self.try_locate(sct):
                         continue
-                if now - t0 > self.cfg["shake_timeout"]:
+                # when to give up on this cast:
+                #  - shake buttons keep coming -> the fish is being lured: keep going (up to 3 min)
+                #  - none at all for 9 s although shaking has worked before -> the cast failed
+                #  - otherwise this rod's normal longest wait (slow lure = longer), or the setting
+                waited = now - t0
+                if gated and shakes and now - last_button < 10 and waited < 180:
+                    pass
+                elif gated and shakes and now - last_button >= 10:
+                    self.log("Shake buttons stopped but no reel came up - casting again")
+                    break
+                elif gated and not shakes and self._shake_works and waited > 9:
+                    self.log("No Shake button after the cast (did it land in water?) - casting again")
+                    break
+                elif waited > limit:
                     extra = " (no Shake button showed up)" if gated and shakes == 0 else ""
-                    self.log(f"No reel after {self.cfg['shake_timeout']:.0f}s{extra} - casting again")
+                    self.log(f"No reel after {waited:.0f}s{extra} - casting again")
                     break
                 if gated and now >= next_scan:
                     pos = self.find_shake_text(sct)
@@ -743,6 +783,7 @@ class Macro:
                     if pos is not None and self.alive():
                         last_button = time.time()
                         shakes += 1
+                        self._shake_works = True
                         if mode == "auto":
                             self.io.click(pos)            # right on the button
                             next_scan = time.time() + 0.12
@@ -771,6 +812,9 @@ class Macro:
                 self.io.move(self.cfg["click_pos"])
         if gated:
             self.last_shakes = shakes
+            if found and shakes:
+                self.log(f"Bite after {time.time() - t0:.0f}s, {shakes} shakes"
+                         + (f" (lure speed {lure:g}%)" if lure is not None else ""))
         return found
 
     def reel(self, sct):

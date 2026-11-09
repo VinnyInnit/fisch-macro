@@ -69,6 +69,7 @@ d.text((683, 1046), "Pinion's Aria", font=f, fill=(255, 255, 255), anchor="mm")
 d.text((756, 1033), "Equipment", font=f, fill=(255, 255, 255), anchor="mm")
 d.text((756, 1050), "Bag", font=f, fill=(255, 255, 255), anchor="mm")
 d.text((960, 960), "Sparkling Celestial Crowned Anglerfish", font=font(16), fill=(255, 255, 255), anchor="mm")
+d.text((960, 935), "Current Bait: Mist Worms [x444]", font=font(16), fill=(255, 220, 140), anchor="mm")
 d.text((960, 120), "[Strange Whirlpool]", font=font(40), fill=(255, 255, 255), anchor="mm")
 t = time.time()
 ident = fa.identify(np.asarray(img))
@@ -76,6 +77,8 @@ dt = time.time() - t
 print(f"identify -> rod {ident.get('rod')!r} enchants {ident.get('enchant')!r} {ident.get('enchant2')!r} "
       f"area {ident.get('area')!r} ({dt * 1000:.0f} ms) slot1={ident['raw'].get('slot1')}")
 ok &= ident.get("rod") == "Pinion's Aria"
+print(f"bait -> {ident.get('bait')!r}")
+ok &= ident.get("bait") == "Mist Worms"
 
 print("OCR CHECK PASSED" if ok else "OCR CHECK FAILED")
 sys.exit(0 if ok else 1)

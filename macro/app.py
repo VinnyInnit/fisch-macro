@@ -39,10 +39,12 @@ EDITABLE = {
     "lookahead": float, "fish_lookahead": float, "brake": float, "deadzone": float,
     "track_tolerance": int, "bar_tolerance": int, "fish_tolerance": int,
     "scan_half_height": int,
-    "rod": str, "overlay": bool, "auto": bool,
+    "rod": str, "overlay": bool, "auto": bool, "weather": str, "shake_timeout_auto": bool,
     "pinion_note_band": float, "input_latency": float,
 }
-CHOICES = {"shake_mode": {"auto", "navigation", "click", "wait"}, "reel_input": {"mouse", "space"},
+CHOICES = {"weather": {"auto", "Clear", "Rain", "Windy", "Foggy", "Starfall", "Tornado", "Rainbow",
+                       "Aurora Borealis", "Eclipse"},
+           "shake_mode": {"auto", "navigation", "click", "wait"}, "reel_input": {"mouse", "space"},
            "rod": set(fm.fr.PROFILES)}
 
 
@@ -206,6 +208,8 @@ class App:
             self.cfg[k] = v
         fm.save_config(self.cfg)
         self.macro.apply_config()
+        if "weather" in changes and "weather" not in bad and self.macro.ident:
+            self.macro.identify_async()          # re-work out lure speed etc. for the new weather
         return bad
 
     # -------------------------------------------------------- calibration
@@ -393,11 +397,15 @@ class App:
 def jsonable_ident(ident):
     if not ident:
         return None
-    out = {k: ident.get(k) for k in ("rod", "enchant", "enchant2", "area", "mode", "notes", "error")}
+    out = {k: ident.get(k) for k in ("rod", "enchant", "enchant2", "bait", "weather", "area", "mode", "notes", "error")}
     r = ident.get("rod_info")
     if r:
         out["control"], out["resilience"] = r["control"], r["resilience"]
         out["bar_width"], out["flags"] = r["bar_width"], r["flags"]
+    e = ident.get("effective")
+    if e:
+        out["bar_width"], out["control"], out["lure"] = e["bar_width"], e["control"], e["lure"]
+        out["adjust"] = e["parts"]
     out["raw"] = ident.get("raw")
     if out.get("enchant"):
         out["enchant_resilience"] = fa.DATA["enchant_resilience"].get(out["enchant"])
@@ -691,9 +699,11 @@ ul.check{margin:0;padding-left:18px} ul.check li{margin:4px 0}
     <button class="small" id="rescanBtn">Re-scan rod</button></div></div>
   <div class="grid" style="margin-top:12px">
     <div><div class="hint">Rod</div><b id="dRod">-</b></div>
-    <div><div class="hint">Enchant</div><b id="dEnch">-</b></div>
+    <div><div class="hint">Enchants</div><b id="dEnch">-</b></div>
+    <div><div class="hint">Bait</div><b id="dBait">-</b></div>
+    <div><div class="hint">Weather</div><b id="dWeather">-</b></div>
     <div><div class="hint">Area</div><b id="dArea">-</b></div>
-    <div><div class="hint">Bar width / Resilience</div><b id="dStats">-</b></div>
+    <div><div class="hint">Lure speed / Bar width</div><b id="dStats">-</b></div>
   </div>
   <p class="hint" id="dNotes" style="margin:10px 0 0"></p>
 </section>
@@ -749,6 +759,11 @@ ul.check{margin:0;padding-left:18px} ul.check li{margin:4px 0}
     <label>Cast hold (s)<input data-k="cast_hold_seconds" type="number" step="0.05" min="0.1"></label>
     <label>Wait after a catch (s)<input data-k="post_catch_delay" type="number" step="0.1" min="0"></label>
     <label>Cast again if no reel after (s)<input data-k="shake_timeout" type="number" step="1" min="5"></label>
+    <label>Weather<select data-k="weather">
+      <option value="auto">Read from screen</option><option>Clear</option><option>Rain</option><option>Windy</option>
+      <option>Foggy</option><option>Starfall</option><option>Tornado</option><option>Rainbow</option>
+      <option>Aurora Borealis</option><option>Eclipse</option></select></label>
+    <label style="flex-direction:row;align-items:center;gap:8px;margin-top:18px"><input type="checkbox" data-k="shake_timeout_auto"> Wait longer for slow-lure rods</label>
     <label>Screen (1 = main)<input data-k="monitor" type="number" step="1" min="1"></label>
   </div>
   <details><summary>Advanced reel tuning</summary>
@@ -844,9 +859,14 @@ function render() {
   $('#startHint').textContent = s.calibrated ? '' : 'Turn on Automatic, or do the manual Setup below.';
   const I = s.ident || {};
   $('#dRod').textContent = I.rod || (I.error ? 'n/a' : (s.auto ? 'read when you press Start' : '-'));
-  $('#dEnch').textContent = I.enchant || (I.raw && I.raw.above_rod && I.raw.above_rod.length ? I.raw.above_rod[0] + ' (skin?)' : '-');
+  $('#dEnch').textContent = I.enchant ? I.enchant + (I.enchant2 ? ' + ' + I.enchant2 : '')
+    : (I.raw && I.raw.above_rod && I.raw.above_rod.length ? I.raw.above_rod[0] + ' (skin?)' : '-');
+  $('#dBait').textContent = I.bait || '-';
+  $('#dWeather').textContent = I.weather ? I.weather + ((s.cfg.weather && s.cfg.weather !== 'auto') ? ' (set by you)' : '')
+    : (I.rod ? 'not shown on screen - set it in Settings' : '-');
   $('#dArea').textContent = I.area || '-';
-  $('#dStats').textContent = I.bar_width ? `${Math.round(I.bar_width * 100)}% / ${I.resilience}%` + (I.enchant_resilience ? ` (enchant ${I.enchant_resilience})` : '') : '-';
+  $('#dStats').textContent = I.bar_width ? (I.lure !== null && I.lure !== undefined ? `${Math.round(I.lure)}%` : '?') + ` / ${Math.round(I.bar_width * 100)}%` : '-';
+  if (I.adjust && I.adjust.length) $('#dStats').title = 'Includes ' + I.adjust.join('; ');
   const dn = [];
   if (I.error) dn.push(I.error + ' - the macro still finds the reel by itself.');
   if (!s.window_found && s.phase !== 'idle') dn.push('Roblox window not found - searching the whole main screen.');
