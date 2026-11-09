@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+fisch_config.json
+.DS_Store
+*.key
+update_signing_key*

@@ -1,0 +1,122 @@
+name: Build and release
+
+# Push a tag like v1.0.1 (matching macro/VERSION) to build both apps and publish a release.
+# "Run workflow" on the Actions tab builds everything without publishing (a test build).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PY: "3.12"
+
+jobs:
+  payload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PY }}" }
+      - name: Tag must match macro/VERSION
+        if: github.ref_type == 'tag'
+        run: |
+          V="v$(cat macro/VERSION | tr -d '[:space:]')"
+          if [ "$V" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::macro/VERSION says $V but the tag is ${GITHUB_REF_NAME}"; exit 1
+          fi
+      - run: pip install cryptography
+      - name: Build and sign the update package
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          NOTES=""
+          if [ -f RELEASE_NOTES.txt ]; then NOTES="$(head -c 300 RELEASE_NOTES.txt)"; fi
+          python tools/make_payload.py --out dist --notes "$NOTES"
+      - uses: actions/upload-artifact@v4
+        with: { name: payload, path: dist/ }
+
+  mac:
+    needs: payload
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PY }}" }
+      - uses: actions/download-artifact@v4
+        with: { name: payload, path: dist }
+      - name: Stage built-in macro code
+        run: mkdir -p build/payload && cd build/payload && unzip -q ../../dist/payload-*.zip
+      - name: Install
+        run: |
+          pip install pyinstaller mss numpy pynput certifi \
+            pyobjc-framework-Cocoa pyobjc-framework-Quartz pyobjc-framework-Vision \
+            pyobjc-framework-ScreenCaptureKit pyobjc-framework-CoreMedia pyobjc-framework-libdispatch
+      - name: Build Fisch Macro.app
+        run: |
+          pyinstaller --noconfirm --windowed --name "Fisch Macro" \
+            --osx-bundle-identifier com.vinnyinnit.fischmacro \
+            --paths launcher --add-data "build/payload:payload" \
+            --hidden-import bundle_imports --collect-submodules pynput --collect-submodules mss \
+            --collect-data certifi launcher/launcher.py
+          codesign --force --deep --sign - "dist/Fisch Macro.app"
+      - name: Self-test the built app
+        run: |
+          FISCH_SELFTEST_OUT="$PWD/selftest.txt" "dist/Fisch Macro.app/Contents/MacOS/Fisch Macro" --selftest || true
+          cat selftest.txt
+          grep -q '^OK' selftest.txt
+      - name: Zip
+        run: ditto -c -k --keepParent "dist/Fisch Macro.app" FischMacro-Mac.zip
+      - uses: actions/upload-artifact@v4
+        with: { name: mac, path: FischMacro-Mac.zip }
+
+  windows:
+    needs: payload
+    runs-on: windows-latest
+    defaults: { run: { shell: bash } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PY }}" }
+      - uses: actions/download-artifact@v4
+        with: { name: payload, path: dist }
+      - name: Stage built-in macro code
+        run: mkdir -p build/payload && cd build/payload && unzip -q ../../dist/payload-*.zip
+      - run: pip install pyinstaller mss numpy pynput certifi
+      - name: Build FischMacro.exe
+        run: |
+          pyinstaller --noconfirm --onefile --noconsole --name "FischMacro" \
+            --paths launcher --add-data "build/payload;payload" \
+            --hidden-import bundle_imports --collect-submodules pynput --collect-submodules mss \
+            --collect-data certifi launcher/launcher.py
+      - name: Self-test the built exe
+        run: |
+          export FISCH_SELFTEST_OUT="$PWD/selftest.txt"
+          ./dist/FischMacro.exe --selftest || true
+          for i in 1 2 3 4 5 6 7 8 9 10; do [ -f selftest.txt ] && break; sleep 2; done
+          cat selftest.txt
+          grep -q '^OK' selftest.txt
+      - name: Rename
+        run: mv dist/FischMacro.exe FischMacro-Windows.exe
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: FischMacro-Windows.exe }
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [payload, mac, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: out }
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="Download **FischMacro-Mac.zip** (Mac) or **FischMacro-Windows.exe** (Windows). Installed apps update themselves."
+          if [ -f RELEASE_NOTES.txt ]; then NOTES="$(cat RELEASE_NOTES.txt)"$'\n\n'"$NOTES"; fi
+          gh release create "${GITHUB_REF_NAME}" --title "Fisch Macro ${GITHUB_REF_NAME}" --notes "$NOTES" \
+            out/mac/FischMacro-Mac.zip out/windows/FischMacro-Windows.exe \
+            out/payload/latest.json out/payload/payload-*.zip

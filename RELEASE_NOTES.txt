@@ -1,0 +1,1 @@
+First release: zero-setup macro with fast screen reading, safe shaking, Pinion's Aria support.

@@ -1,0 +1,59 @@
+FISCH MACRO - zero setup
+========================
+
+OPEN IT
+  Mac:     right-click "Start Fisch Macro (Mac).command" > Open > Open.
+           (Every newly downloaded copy must be opened this way once. Double-clicking
+           a fresh download does nothing visible because macOS blocks it.)
+  Windows: double-click "Start Fisch Macro (Windows).bat"
+           (SmartScreen: More info > Run anyway.)
+
+  First run installs what it needs (internet, about a minute), then the Fisch
+  Macro window opens in your browser. Keep the small Terminal window open.
+
+UPDATING FROM AN OLDER VERSION
+  Close the old Terminal window first (Cmd+Q on Terminal), then open the new
+  launcher the same way. The first start installs the fast screen reader (a few
+  seconds). Old saved settings are cleaned up automatically.
+
+MAC PERMISSIONS (one time) - WITHOUT THESE IT CAN'T WORK
+  System Settings > Privacy & Security, switch "Terminal" ON under:
+    - Accessibility      (presses the mouse/keys - without it the bar never moves)
+    - Screen Recording   (sees the game)
+    - Input Monitoring   (F6 pause key)
+  Then quit Terminal (Cmd+Q) and open the launcher again. The window shows a
+  yellow warning while any of these is off.
+
+GAME SETTINGS (one time)
+  - Nothing needed for shaking: on Mac the macro reads the screen for the Shake
+    button and clicks it only while one is showing. With no button it presses
+    nothing, so it can't open your inventory or the menus.
+  - Fisch settings: Higher Brightness, Higher Saturation and Wind Shake OFF.
+
+USE IT
+  Equip your rod, press Start, click into Roblox. That's it. The macro:
+    - finds the Roblox window and casts from the middle of the game view
+    - reads your rod, its enchant and your area from the screen (Mac) and looks
+      them up in Fisch Wiki data (Control = bar size, Resilience, special minigames)
+    - finds the reel bar on screen by itself at the first bite, and learns what
+      your minigame looks like (works with most rod skins too)
+    - only counts the reel as up once it really sees the track (edges, ends) and it
+      moves - so it shakes properly and never "reels" a still picture
+    - keeps the fish in the bar, reels, and repeats
+    - casts again if no reel shows up within 25 s (change "Cast again if no reel
+      after" in Settings)
+    - reads the screen up to 60 times a second on Mac (ScreenCaptureKit)
+  Pause: F6 (fn+F6 on a MacBook) or move the mouse into the top-left corner.
+
+  Only if it can't find the reel: open "Manual setup" in the window.
+
+SPECIAL RODS
+  - Pinion's Aria: detected automatically; the macro lands the falling notes in
+    your bar (that's what makes it a perfect catch) and follows the bird between notes.
+  - Remembrance: detected automatically; white fish in the bar, dark fish out.
+  - Other note rods (Astraeus Serenade, Noiseform, Santa's Miracle, Tranquility):
+    the fish is kept in the bar, notes aren't chased yet.
+  - Rods with two fish (D.R.E.D., Eldritch, Splitbranch Twig): it follows one.
+  - Windows: no rod/enchant/area reading and no Shake-button reading.
+
+Heads-up: macros are usually against Fisch's and Roblox's rules. Use at your own risk.
