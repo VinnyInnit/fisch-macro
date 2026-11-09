@@ -1,7 +1,7 @@
 @echo off
 REM Double-click to open Fisch Macro. First run installs what it needs (about a minute).
 title Fisch Macro
-cd /d "%~dp0"
+cd /d "%~dp0..\macro"
 echo Fisch Macro
 echo -----------
 

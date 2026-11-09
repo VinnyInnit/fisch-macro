@@ -1,6 +1,6 @@
 #!/bin/bash
 # Double-click to open Fisch Macro. First run installs what it needs (about a minute).
-cd "$(dirname "$0")" || exit 1
+cd "$(dirname "$0")/../macro" || exit 1
 clear
 echo "Fisch Macro"
 echo "-----------"
